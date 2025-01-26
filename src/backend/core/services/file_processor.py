@@ -1,25 +1,17 @@
 from pathlib import Path
-from typing import List, Protocol
-from abc import ABC, abstractmethod
-
+from typing import List
 from llama_index.core import Document
 from llama_index.readers.file import PDFReader, DocxReader
 from llama_index.core.node_parser import SimpleNodeParser
 
-from src.utils.config import SUPPORTED_FILE_TYPES, CHUNK_SIZE, CHUNK_OVERLAP
+from src.utils.config import CHUNK_SIZE, CHUNK_OVERLAP
 
-class DocumentReader(Protocol):
-    def load_data(self, file_path: Path) -> List[Document]:
-        pass
-
-class BaseFileReader(ABC):
-    @abstractmethod
+class BaseFileReader:
     def can_handle(self, file_extension: str) -> bool:
-        pass
+        raise NotImplementedError
         
-    @abstractmethod
     def read(self, file_path: Path) -> List[Document]:
-        pass
+        raise NotImplementedError
 
 class PDFFileReader(BaseFileReader):
     def __init__(self):
@@ -68,11 +60,9 @@ class FileProcessor:
         self.document_processor = DocumentProcessor()
     
     def validate_file(self, file_path: Path) -> bool:
-        """Validate if the file type is supported."""
         return file_path.suffix.lower().replace('.', '') in SUPPORTED_FILE_TYPES
     
     def read_file(self, file_path: str | Path) -> List[Document]:
-        """Read a file and return a list of documents."""
         if isinstance(file_path, str):
             file_path = Path(file_path)
             
@@ -89,5 +79,4 @@ class FileProcessor:
         raise ValueError(f"Unsupported file type: {extension}")
     
     def process_documents(self, documents: List[Document]) -> List[Document]:
-        """Process documents for RAG system."""
-        return documents 
+        return documents
