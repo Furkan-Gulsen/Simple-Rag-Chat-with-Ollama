@@ -2,9 +2,11 @@ import streamlit as st
 from pathlib import Path
 import tempfile
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
-from src.backend.chat_manager import ChatManager
+from src.backend.core.services.chat_manager import ChatManager
+
+ALLOWED_FILE_TYPES = ["txt", "pdf", "py", "js", "java", "cpp", "h", "c", "cs"]
 
 class StreamlitUI:
     def __init__(self):
@@ -39,6 +41,10 @@ class StreamlitUI:
         
     def _render_session_list(self):
         sessions = self.chat_manager.get_all_sessions()
+        if not sessions:
+            st.sidebar.info("No previous sessions found")
+            return
+            
         for session in sessions:
             session_time = session["last_accessed"].strftime("%Y-%m-%d %H:%M")
             session_title = f"{session['filename']} ({session_time})"
@@ -58,8 +64,9 @@ class StreamlitUI:
             st.rerun()
         
     def _render_current_session_info(self):
-        if st.session_state.current_session_id:
-            session = self.chat_manager.get_session(st.session_state.current_session_id)
+        current_session_id = st.session_state.current_session_id
+        if current_session_id:
+            session = self.chat_manager.get_session(current_session_id)
             if session:
                 st.sidebar.markdown("### Current Session")
                 st.sidebar.markdown(f"**File:** {session['filename']}")
@@ -70,31 +77,49 @@ class StreamlitUI:
         if st.session_state.show_file_uploader:
             uploaded_file = st.file_uploader(
                 "Upload a file to start chatting",
-                type=["txt", "pdf", "py", "js", "java", "cpp", "h", "c", "cs"],
+                type=ALLOWED_FILE_TYPES,
                 key="file_uploader"
             )
             
             if uploaded_file:
-                if not st.session_state.current_session_id or uploaded_file.name != st.session_state.get("last_file_name"):
+                current_session_id = st.session_state.current_session_id
+                last_file_name = st.session_state.get("last_file_name")
+                
+                if not current_session_id or uploaded_file.name != last_file_name:
                     self._process_uploaded_file(uploaded_file)
                     
     def _process_uploaded_file(self, uploaded_file):
         with st.spinner("Processing file..."):
-            with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp_file:
-                tmp_file.write(uploaded_file.getvalue())
-                tmp_path = tmp_file.name
+            try:
+                if len(uploaded_file.getvalue()) > 10 * 1024 * 1024:
+                    st.error("File size exceeds 10MB limit")
+                    return
+                    
+                with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp_file:
+                    tmp_file.write(uploaded_file.getvalue())
+                    tmp_path = tmp_file.name
             
-            session_id = self.chat_manager.create_session(uploaded_file.name, tmp_path)
-            st.session_state.current_session_id = session_id
-            st.session_state.show_file_uploader = False
-            st.session_state.messages = []
-            st.session_state.last_file_name = uploaded_file.name
-            st.success(f"File processed: {uploaded_file.name}")
-            st.rerun()
+                session_id = self.chat_manager.create_session(uploaded_file.name, tmp_path)
+                if not session_id:
+                    raise ValueError("Failed to create session")
+                    
+                st.session_state.current_session_id = session_id
+                st.session_state.show_file_uploader = False
+                st.session_state.messages = []
+                st.session_state.last_file_name = uploaded_file.name
+                st.success(f"File processed: {uploaded_file.name}")
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"Error processing file: {str(e)}")
+                st.session_state.show_file_uploader = True
             
     def render_chat_interface(self):
-        if not st.session_state.current_session_id:
-            if not st.session_state.show_file_uploader:
+        current_session_id = st.session_state.current_session_id
+        show_file_uploader = st.session_state.show_file_uploader
+        
+        if not current_session_id:
+            if not show_file_uploader:
                 st.info("Please click '➕ New Session' to start a new chat or select an existing session.")
             return
             
@@ -104,7 +129,13 @@ class StreamlitUI:
     def _render_chat_messages(self):
         chat_container = st.container()
         with chat_container:
-            for message in st.session_state.messages:
+            messages = st.session_state.messages
+            
+            if not messages:
+                st.info("No messages yet. Start the conversation!")
+                return
+                
+            for message in messages:
                 with st.chat_message(message["role"]):
                     st.markdown(message["content"])
                     st.caption(f"_{message.get('timestamp', datetime.utcnow()).strftime('%H:%M:%S')}_")
@@ -129,7 +160,8 @@ class StreamlitUI:
         with st.chat_message("assistant"):
             with st.spinner("🤔 Thinking..."):
                 try:
-                    response = self.chat_manager.query(st.session_state.current_session_id, prompt)
+                    current_session_id = st.session_state.current_session_id
+                    response = self.chat_manager.query(current_session_id, prompt)
                     st.markdown(response)
                     self._add_assistant_message(response)
                 except Exception as e:
